@@ -1,11 +1,13 @@
 """
-Tests for EL-3: Ingest endpoint — POST /v1/episodes.
+Tests for episode store API endpoints.
 
-Also tests GET /v1/episodes, GET /v1/episodes/{id}, and GET /v1/health.
-Uses httpx AsyncClient with FastAPI's TestClient pattern.
+Covers EL-3 (ingest), EL-4 (extended filters), EL-5 (replay),
+EL-7 (diff), and EL-9 (JSONL export).
 """
 
 from __future__ import annotations
+
+import json
 
 import pytest
 
@@ -203,3 +205,200 @@ class TestListEpisodes:
 
         resp2 = await client.get("/v1/episodes", params={"limit": 2, "offset": 2})
         assert len(resp2.json()) == 2
+
+
+# ---------------------------------------------------------------------------
+# EL-4: Extended filters (model, provider, tool)
+# ---------------------------------------------------------------------------
+
+class TestExtendedFilters:
+    @pytest.mark.asyncio
+    async def test_filter_by_model(self, client):
+        """GET filters by model name inside steps JSON."""
+        await client.post("/v1/episodes", json=_make_episode_payload())  # has gpt-4
+        await client.post("/v1/episodes", json=_make_episode_payload(
+            steps=[{"step_index": 0, "step_type": "llm_call", "model": "claude-3", "tokens": 100}]
+        ))
+
+        resp = await client.get("/v1/episodes", params={"model": "gpt-4"})
+        data = resp.json()
+        assert len(data) == 1
+
+    @pytest.mark.asyncio
+    async def test_filter_by_provider(self, client):
+        """GET filters by provider inside steps JSON."""
+        await client.post("/v1/episodes", json=_make_episode_payload())  # has openai
+        await client.post("/v1/episodes", json=_make_episode_payload(
+            steps=[{"step_index": 0, "step_type": "llm_call", "provider": "anthropic", "tokens": 100}]
+        ))
+
+        resp = await client.get("/v1/episodes", params={"provider": "anthropic"})
+        data = resp.json()
+        assert len(data) == 1
+
+    @pytest.mark.asyncio
+    async def test_filter_by_tool(self, client):
+        """GET filters by tool name in tools_used."""
+        await client.post("/v1/episodes", json=_make_episode_payload())  # has web_search
+        await client.post("/v1/episodes", json=_make_episode_payload(
+            steps=[{"step_index": 0, "step_type": "tool_call", "tool_name": "calculator", "tokens": 50}]
+        ))
+
+        resp = await client.get("/v1/episodes", params={"tool": "calculator"})
+        data = resp.json()
+        assert len(data) == 1
+        assert "calculator" in data[0]["tools_used"]
+
+    @pytest.mark.asyncio
+    async def test_filter_no_match(self, client):
+        """GET returns empty when filter matches nothing."""
+        await client.post("/v1/episodes", json=_make_episode_payload())
+        resp = await client.get("/v1/episodes", params={"model": "nonexistent-model"})
+        assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# EL-5: Replay
+# ---------------------------------------------------------------------------
+
+class TestReplay:
+    @pytest.mark.asyncio
+    async def test_replay_endpoint(self, client):
+        """GET /v1/episodes/{id}/replay returns replay-ready view."""
+        create_resp = await client.post("/v1/episodes", json=_make_episode_payload())
+        ep_id = create_resp.json()["episode_id"]
+
+        resp = await client.get(f"/v1/episodes/{ep_id}/replay")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["episode_id"] == ep_id
+        assert data["agent_id"] == "test-agent"
+        assert data["original_status"] == "success"
+        assert len(data["replay_steps"]) == 2
+        assert data["replay_steps"][0]["replay_index"] == 0
+        assert data["replay_steps"][1]["replay_index"] == 1
+        assert data["tools_used"] == ["web_search"]
+
+    @pytest.mark.asyncio
+    async def test_replay_not_found(self, client):
+        """GET /v1/episodes/{id}/replay returns 404 for missing episode."""
+        resp = await client.get("/v1/episodes/nonexistent/replay")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_replay_strips_timestamps(self, client):
+        """Replay steps should not contain timestamp fields."""
+        create_resp = await client.post("/v1/episodes", json=_make_episode_payload())
+        ep_id = create_resp.json()["episode_id"]
+
+        resp = await client.get(f"/v1/episodes/{ep_id}/replay")
+        step = resp.json()["replay_steps"][0]
+        assert "timestamp" not in step
+
+
+# ---------------------------------------------------------------------------
+# EL-7: Diff
+# ---------------------------------------------------------------------------
+
+class TestDiff:
+    @pytest.mark.asyncio
+    async def test_diff_identical(self, client):
+        """Diffing two identical episodes shows zero differences."""
+        payload = _make_episode_payload()
+        r1 = await client.post("/v1/episodes", json=payload)
+        r2 = await client.post("/v1/episodes", json=payload)
+        id1, id2 = r1.json()["episode_id"], r2.json()["episode_id"]
+
+        resp = await client.get("/v1/episodes/diff", params={"left": id1, "right": id2})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["matching_steps"] == 2
+        assert data["differing_steps"] == 0
+        assert data["token_delta"] == 0
+        assert data["cost_delta"] == 0.0
+        assert data["step_diffs"] == []
+
+    @pytest.mark.asyncio
+    async def test_diff_different_models(self, client):
+        """Diffing episodes with different models shows field diffs."""
+        p1 = _make_episode_payload()
+        p2 = _make_episode_payload(steps=[
+            {"step_index": 0, "step_type": "llm_call", "model": "claude-3", "provider": "anthropic", "tokens": 150, "cost_usd": 0.005, "duration_ms": 800},
+            {"step_index": 1, "step_type": "tool_call", "tool_name": "web_search", "tokens": 200, "cost_usd": 0.006, "duration_ms": 1200},
+        ])
+        r1 = await client.post("/v1/episodes", json=p1)
+        r2 = await client.post("/v1/episodes", json=p2)
+        id1, id2 = r1.json()["episode_id"], r2.json()["episode_id"]
+
+        resp = await client.get("/v1/episodes/diff", params={"left": id1, "right": id2})
+        data = resp.json()
+        assert data["differing_steps"] >= 1
+        # Should have model and provider diffs at step 0
+        fields_changed = [d["field"] for d in data["step_diffs"]]
+        assert "model" in fields_changed
+        assert "provider" in fields_changed
+
+    @pytest.mark.asyncio
+    async def test_diff_different_step_counts(self, client):
+        """Diffing episodes with different step counts tracks extras."""
+        p1 = _make_episode_payload()  # 2 steps
+        p2 = _make_episode_payload(steps=[
+            {"step_index": 0, "step_type": "llm_call", "model": "gpt-4", "provider": "openai", "tokens": 150}
+        ])  # 1 step
+        r1 = await client.post("/v1/episodes", json=p1)
+        r2 = await client.post("/v1/episodes", json=p2)
+        id1, id2 = r1.json()["episode_id"], r2.json()["episode_id"]
+
+        resp = await client.get("/v1/episodes/diff", params={"left": id1, "right": id2})
+        data = resp.json()
+        assert data["left_step_count"] == 2
+        assert data["right_step_count"] == 1
+        assert data["extra_left"] == 1
+
+    @pytest.mark.asyncio
+    async def test_diff_not_found(self, client):
+        """Diff returns 404 when an episode doesn't exist."""
+        resp = await client.get("/v1/episodes/diff", params={"left": "fake-1", "right": "fake-2"})
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# EL-9: JSONL Export
+# ---------------------------------------------------------------------------
+
+class TestExport:
+    @pytest.mark.asyncio
+    async def test_export_jsonl(self, client):
+        """GET /v1/episodes/export returns JSONL stream."""
+        await client.post("/v1/episodes", json=_make_episode_payload(agent_id="a1"))
+        await client.post("/v1/episodes", json=_make_episode_payload(agent_id="a2"))
+
+        resp = await client.get("/v1/episodes/export")
+        assert resp.status_code == 200
+        assert "application/x-ndjson" in resp.headers["content-type"]
+
+        lines = resp.text.strip().split("\n")
+        assert len(lines) == 2
+        # Each line should be valid JSON
+        for line in lines:
+            parsed = json.loads(line)
+            assert "episode_id" in parsed
+            assert "steps" in parsed  # Full episodes, not summaries
+
+    @pytest.mark.asyncio
+    async def test_export_with_filter(self, client):
+        """Export respects agent_id filter."""
+        await client.post("/v1/episodes", json=_make_episode_payload(agent_id="export-a"))
+        await client.post("/v1/episodes", json=_make_episode_payload(agent_id="export-b"))
+
+        resp = await client.get("/v1/episodes/export", params={"agent_id": "export-a"})
+        lines = resp.text.strip().split("\n")
+        assert len(lines) == 1
+        assert json.loads(lines[0])["agent_id"] == "export-a"
+
+    @pytest.mark.asyncio
+    async def test_export_empty(self, client):
+        """Export returns empty body when no episodes match."""
+        resp = await client.get("/v1/episodes/export")
+        assert resp.status_code == 200
+        assert resp.text.strip() == ""

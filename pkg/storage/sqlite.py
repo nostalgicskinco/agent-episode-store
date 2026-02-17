@@ -20,7 +20,17 @@ from pathlib import Path
 
 import aiosqlite
 
-from pkg.models import Episode, EpisodeCreate, EpisodeStep, EpisodeSummary
+from pkg.models import (
+    Episode,
+    EpisodeCreate,
+    EpisodeDiff,
+    EpisodeReplay,
+    EpisodeStep,
+    EpisodeStatus,
+    EpisodeSummary,
+    ReplayStep,
+    StepDiff,
+)
 
 # ---------------------------------------------------------------------------
 # SQL
@@ -195,11 +205,16 @@ class EpisodeStore:
         status: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        tool: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[EpisodeSummary]:
         """List episodes with optional filters.
 
+        EL-4: Extended filters — model, provider, tool (searched inside
+        the JSON steps column using SQLite JSON/LIKE).
         Returns lightweight summaries (no steps) for performance.
         """
         assert self._db is not None, "Call init() first"
@@ -219,6 +234,15 @@ class EpisodeStore:
         if until:
             where_clauses.append("AND started_at <= ?")
             params.append(until.isoformat())
+        if model:
+            where_clauses.append("AND steps LIKE ?")
+            params.append(f'%"model": "{model}"%')
+        if provider:
+            where_clauses.append("AND steps LIKE ?")
+            params.append(f'%"provider": "{provider}"%')
+        if tool:
+            where_clauses.append("AND tools_used LIKE ?")
+            params.append(f'%"{tool}"%')
 
         query = (
             _SELECT_LIST
@@ -253,6 +277,147 @@ class EpisodeStore:
         cursor = await self._db.execute(query, params)
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    # ------------------------------------------------------------------
+    # Replay (EL-5)
+    # ------------------------------------------------------------------
+
+    async def get_replay(self, episode_id: str) -> EpisodeReplay | None:
+        """Build a replay-ready view of an episode.
+
+        Strips timestamps and re-indexes steps for sequential replay
+        through the gateway.
+        """
+        episode = await self.get(episode_id)
+        if episode is None:
+            return None
+
+        replay_steps = [
+            ReplayStep(
+                replay_index=i,
+                step_type=s.step_type,
+                tool_name=s.tool_name,
+                model=s.model,
+                provider=s.provider,
+                input_summary=s.input_summary,
+                output_summary=s.output_summary,
+                tokens=s.tokens,
+                cost_usd=s.cost_usd,
+                duration_ms=s.duration_ms,
+                metadata=s.metadata,
+            )
+            for i, s in enumerate(episode.steps)
+        ]
+
+        return EpisodeReplay(
+            episode_id=episode.episode_id,
+            agent_id=episode.agent_id,
+            original_status=episode.status,
+            replay_steps=replay_steps,
+            total_tokens=episode.total_tokens,
+            total_cost_usd=episode.total_cost_usd,
+            tools_used=episode.tools_used,
+        )
+
+    # ------------------------------------------------------------------
+    # Diff (EL-7)
+    # ------------------------------------------------------------------
+
+    async def diff(self, left_id: str, right_id: str) -> EpisodeDiff | None:
+        """Compare two episodes step-by-step.
+
+        Returns a diff showing which steps changed between the left
+        (baseline) and right (comparison) episodes.
+        Returns None if either episode doesn't exist.
+        """
+        left = await self.get(left_id)
+        right = await self.get(right_id)
+        if left is None or right is None:
+            return None
+
+        step_diffs: list[StepDiff] = []
+        matching = 0
+        differing = 0
+
+        compare_fields = [
+            "step_type", "tool_name", "model", "provider",
+            "input_summary", "output_summary",
+        ]
+
+        min_len = min(len(left.steps), len(right.steps))
+        for i in range(min_len):
+            ls, rs = left.steps[i], right.steps[i]
+            step_has_diff = False
+            for field in compare_fields:
+                lv = str(getattr(ls, field))
+                rv = str(getattr(rs, field))
+                if lv != rv:
+                    step_diffs.append(StepDiff(
+                        step_index=i, field=field, left=lv, right=rv,
+                    ))
+                    step_has_diff = True
+            if step_has_diff:
+                differing += 1
+            else:
+                matching += 1
+
+        return EpisodeDiff(
+            left_episode_id=left_id,
+            right_episode_id=right_id,
+            left_step_count=len(left.steps),
+            right_step_count=len(right.steps),
+            matching_steps=matching,
+            differing_steps=differing,
+            extra_left=max(0, len(left.steps) - len(right.steps)),
+            extra_right=max(0, len(right.steps) - len(left.steps)),
+            token_delta=right.total_tokens - left.total_tokens,
+            cost_delta=round(right.total_cost_usd - left.total_cost_usd, 6),
+            duration_delta=right.total_duration_ms - left.total_duration_ms,
+            step_diffs=step_diffs,
+        )
+
+    # ------------------------------------------------------------------
+    # Export (EL-9)
+    # ------------------------------------------------------------------
+
+    async def export_jsonl(
+        self,
+        agent_id: str | None = None,
+        status: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[dict]:
+        """Export episodes as a list of dicts (for JSONL serialization).
+
+        Each dict is a complete episode with steps — suitable for
+        writing one-per-line to a .jsonl file for offline analysis.
+        """
+        assert self._db is not None, "Call init() first"
+
+        where_clauses: list[str] = []
+        params: list[str | int] = []
+
+        if agent_id:
+            where_clauses.append("AND agent_id = ?")
+            params.append(agent_id)
+        if status:
+            where_clauses.append("AND status = ?")
+            params.append(status)
+        if since:
+            where_clauses.append("AND started_at >= ?")
+            params.append(since.isoformat())
+        if until:
+            where_clauses.append("AND started_at <= ?")
+            params.append(until.isoformat())
+
+        query = (
+            "SELECT * FROM episodes WHERE 1=1 "
+            + " ".join(where_clauses)
+            + " ORDER BY started_at DESC"
+        )
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_episode(r).model_dump(mode="json") for r in rows]
 
     # ------------------------------------------------------------------
     # Helpers

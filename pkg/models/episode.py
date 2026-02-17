@@ -195,3 +195,69 @@ class EpisodeSummary(BaseModel):
     step_count: int
     started_at: datetime
     ended_at: datetime | None
+
+
+# ---------------------------------------------------------------------------
+# Replay (EL-5)
+# ---------------------------------------------------------------------------
+
+class ReplayStep(BaseModel):
+    """A single step in a replay sequence.
+
+    Adds a 'replay_index' for ordering and strips fields
+    that aren't needed for replay (like timestamps).
+    """
+    replay_index: int
+    step_type: StepType
+    tool_name: str | None = None
+    model: str | None = None
+    provider: str | None = None
+    input_summary: str | None = None
+    output_summary: str | None = None
+    tokens: int = 0
+    cost_usd: float = 0.0
+    duration_ms: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class EpisodeReplay(BaseModel):
+    """Replay-ready view of an episode.
+
+    Contains just what you need to feed back through the gateway:
+    the agent, the ordered steps, and the original result.
+    """
+    episode_id: str
+    agent_id: str
+    original_status: EpisodeStatus
+    replay_steps: list[ReplayStep]
+    total_tokens: int
+    total_cost_usd: float
+    tools_used: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Diff (EL-7)
+# ---------------------------------------------------------------------------
+
+class StepDiff(BaseModel):
+    """Difference between two steps at the same index."""
+    step_index: int
+    field: str
+    left: str | None = None
+    right: str | None = None
+
+
+class EpisodeDiff(BaseModel):
+    """Result of comparing two episodes step-by-step."""
+    left_episode_id: str
+    right_episode_id: str
+    left_step_count: int
+    right_step_count: int
+    matching_steps: int
+    differing_steps: int
+    extra_left: int
+    extra_right: int
+    token_delta: int
+    cost_delta: float
+    duration_delta: int
+    step_diffs: list[StepDiff]
