@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIR Blackbox — Episode Store Demo</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0f;color:#e0e0e0;overflow:hidden;height:100vh}
+.container{max-width:1100px;margin:0 auto;padding:20px;height:100vh;display:flex;flex-direction:column}
+header{text-align:center;padding:12px 0;flex-shrink:0}
+header h1{font-size:1.6em;color:#fff;margin-bottom:4px}
+header h1 span{color:#f59e0b}
+header p{color:#888;font-size:0.85em}
+.badge{display:inline-block;background:#1a1a2e;border:1px solid #f59e0b33;color:#f59e0b;padding:2px 10px;border-radius:12px;font-size:0.75em;margin-top:4px}
+.slide-area{flex:1;display:flex;flex-direction:column;justify-content:center;overflow:hidden}
+.slide{display:none;animation:fadeIn 0.4s ease}
+.slide.active{display:flex;flex-direction:column;gap:14px}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.slide-title{font-size:1.15em;color:#f59e0b;font-weight:600}
+.slide-subtitle{color:#aaa;font-size:0.85em;margin-top:-8px}
+.card{background:#111827;border:1px solid #1e293b;border-radius:10px;padding:16px;position:relative;overflow:hidden}
+.card-header{font-size:0.8em;color:#f59e0b;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;font-weight:600}
+pre{background:#0d1117;border:1px solid #1e293b;border-radius:8px;padding:12px;font-size:0.78em;line-height:1.5;overflow-x:auto;color:#c9d1d9;font-family:'SF Mono',Monaco,monospace}
+.k{color:#ff7b72}.s{color:#a5d6ff}.n{color:#d2a8ff}.c{color:#8b949e;font-style:italic}.p{color:#79c0ff}.v{color:#ffa657}
+.trace-flow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.trace-span{background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:8px 12px;font-size:0.75em;position:relative;transition:all 0.3s}
+.trace-span.highlight{border-color:#f59e0b;box-shadow:0 0 12px #f59e0b33}
+.trace-span .label{color:#888;font-size:0.7em;display:block}
+.trace-span .value{color:#fff;font-weight:500}
+.arrow{color:#f59e0b;font-size:1.2em}
+.episode-box{background:linear-gradient(135deg,#1a1a2e,#111827);border:2px solid #f59e0b44;border-radius:10px;padding:14px;margin:6px 0}
+.episode-box .ep-header{display:flex;justify-content:between;align-items:center;gap:12px;margin-bottom:8px}
+.episode-box .ep-id{color:#f59e0b;font-family:monospace;font-size:0.85em}
+.episode-box .ep-status{background:#065f46;color:#34d399;padding:2px 8px;border-radius:4px;font-size:0.7em}
+.timeline{display:flex;flex-direction:column;gap:4px}
+.timeline-item{display:flex;align-items:center;gap:8px;font-size:0.75em;padding:4px 8px;border-radius:4px;background:#0d1117}
+.timeline-item .time{color:#888;font-family:monospace;min-width:70px}
+.timeline-item .event{color:#c9d1d9}
+.timeline-item .dur{color:#f59e0b;margin-left:auto;font-family:monospace}
+.metric-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.metric{background:#0d1117;border:1px solid #1e293b;border-radius:8px;padding:10px;text-align:center}
+.metric .num{font-size:1.4em;font-weight:700;color:#f59e0b}
+.metric .lbl{font-size:0.7em;color:#888;margin-top:2px}
+.storage-diagram{display:flex;gap:16px;align-items:stretch}
+.storage-col{flex:1;display:flex;flex-direction:column;gap:6px}
+.storage-col h4{color:#f59e0b;font-size:0.8em;text-align:center;margin-bottom:4px}
+.storage-item{background:#0d1117;border:1px solid #1e293b;border-radius:6px;padding:8px;font-size:0.72em;text-align:center}
+.storage-item.active{border-color:#f59e0b;background:#1a1520}
+.connector{display:flex;align-items:center;justify-content:center;color:#f59e0b;font-size:1.5em;flex-shrink:0;width:30px}
+.replay-panel{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.replay-left,.replay-right{display:flex;flex-direction:column;gap:6px}
+nav{display:flex;justify-content:center;gap:8px;padding:10px 0;flex-shrink:0;align-items:center}
+nav button{background:#1a1a2e;border:1px solid #333;color:#e0e0e0;padding:6px 18px;border-radius:6px;cursor:pointer;font-size:0.8em;transition:all 0.2s}
+nav button:hover{border-color:#f59e0b;color:#f59e0b}
+nav button:disabled{opacity:0.3;cursor:not-allowed}
+nav .counter{color:#888;font-size:0.8em;min-width:60px;text-align:center}
+.anim-item{opacity:0;transform:translateX(-10px);transition:all 0.4s ease}
+.anim-item.show{opacity:1;transform:translateX(0)}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:0.7em;margin:1px}
+.tag-blue{background:#1e3a5f;color:#60a5fa}
+.tag-green{background:#064e3b;color:#34d399}
+.tag-yellow{background:#422006;color:#fbbf24}
+.tag-red{background:#450a0a;color:#f87171}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+<h1><span>AIR Blackbox</span> — Episode Store</h1>
+<p>Groups raw traces into replayable task-level episodes</p>
+<span class="badge">Interactive Demo</span>
+</header>
+<div class="slide-area">
+
+<!-- Slide 1: The Problem -->
+<div class="slide" id="s1">
+<div class="slide-title">The Problem: Traces ≠ Understanding</div>
+<div class="slide-subtitle">Raw OpenTelemetry spans are low-level — you can't see what an agent actually did</div>
+<div class="card">
+<div class="card-header">Raw Traces from a Research Agent</div>
+<div class="trace-flow" id="trace-flow-1">
+<div class="trace-span anim-item"><span class="label">span-001</span><span class="value">llm.chat</span></div>
+<div class="arrow anim-item">→</div>
+<div class="trace-span anim-item"><span class="label">span-002</span><span class="value">tool.search</span></div>
+<div class="arrow anim-item">→</div>
+<div class="trace-span anim-item"><span class="label">span-003</span><span class="value">llm.chat</span></div>
+<div class="arrow anim-item">→</div>
+<div class="trace-span anim-item"><span class="label">span-004</span><span class="value">tool.read_url</span></div>
+<div class="arrow anim-item">→</div>
+<div class="trace-span anim-item"><span class="label">span-005</span><span class="value">llm.chat</span></div>
+<div class="arrow anim-item">→</div>
+<div class="trace-span anim-item"><span class="label">span-006</span><span class="value">tool.write</span></div>
+</div>
+</div>
+<div class="two-col">
+<div class="card">
+<div class="card-header">What you see</div>
+<pre>6 spans across 3 trace IDs
+Total duration: 47.3s
+Token count: 4,218
+<span class="c">// Which spans belong together?</span>
+<span class="c">// What was the agent trying to do?</span>
+<span class="c">// Can I replay this task?</span></pre>
+</div>
+<div class="card">
+<div class="card-header">What you need</div>
+<pre><span class="c">// A task-level view:</span>
+Episode: <span class="s">"Research competitor pricing"</span>
+  Steps: <span class="n">6 spans grouped</span>
+  Duration: <span class="v">47.3s</span>
+  Result: <span class="s">"report.md written"</span>
+  Risk: <span class="k">medium</span> (external URLs accessed)
+  <span class="p">▶ Replay available</span></pre>
+</div>
+</div>
+</div>
+
+<!-- Slide 2: Episode Grouping -->
+<div class="slide" id="s2">
+<div class="slide-title">Episode Grouping: Traces → Tasks</div>
+<div class="slide-subtitle">The Episode Store correlates spans into logical task-level episodes</div>
+<div class="card">
+<div class="card-header">Incoming Spans (OTLP gRPC)</div>
+<div class="trace-flow" id="trace-flow-2">
+<div class="trace-span anim-item" style="border-color:#3b82f6"><span class="label">task_id: abc-123</span><span class="value">llm.chat → "plan research"</span></div>
+<div class="trace-span anim-item" style="border-color:#3b82f6"><span class="label">task_id: abc-123</span><span class="value">tool.search → "competitor sites"</span></div>
+<div class="trace-span anim-item" style="border-color:#10b981"><span class="label">task_id: def-456</span><span class="value">llm.chat → "draft email"</span></div>
+<div class="trace-span anim-item" style="border-color:#3b82f6"><span class="label">task_id: abc-123</span><span class="value">llm.chat → "summarize findings"</span></div>
+<div class="trace-span anim-item" style="border-color:#10b981"><span class="label">task_id: def-456</span><span class="value">tool.send_email</span></div>
+</div>
+</div>
+<div class="two-col">
+<div class="episode-box">
+<div class="ep-header">
+<span class="ep-id">Episode abc-123</span>
+<span class="ep-status">● complete</span>
+<span class="tag tag-blue">research</span>
+</div>
+<div class="timeline">
+<div class="timeline-item anim-item"><span class="time">00:00.0</span><span class="event">llm.chat — plan research</span><span class="dur">2.1s</span></div>
+<div class="timeline-item anim-item"><span class="time">00:02.1</span><span class="event">tool.search — competitor sites</span><span class="dur">8.4s</span></div>
+<div class="timeline-item anim-item"><span class="time">00:33.7</span><span class="event">llm.chat — summarize findings</span><span class="dur">5.2s</span></div>
+</div>
+</div>
+<div class="episode-box">
+<div class="ep-header">
+<span class="ep-id">Episode def-456</span>
+<span class="ep-status">● complete</span>
+<span class="tag tag-green">comms</span>
+</div>
+<div class="timeline">
+<div class="timeline-item anim-item"><span class="time">00:00.0</span><span class="event">llm.chat — draft email</span><span class="dur">3.8s</span></div>
+<div class="timeline-item anim-item"><span class="time">00:03.8</span><span class="event">tool.send_email</span><span class="dur">1.2s</span></div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- Slide 3: Storage Architecture -->
+<div class="slide" id="s3">
+<div class="slide-title">Storage: SQLite + S3 Vault</div>
+<div class="slide-subtitle">Metadata in SQLite for fast queries, payloads in S3 for cost-efficient storage</div>
+<div class="card">
+<div class="storage-diagram">
+<div class="storage-col">
+<h4>SQLite (Metadata)</h4>
+<div class="storage-item active anim-item">episode_id: abc-123</div>
+<div class="storage-item anim-item">task_type: research</div>
+<div class="storage-item anim-item">agent: research-bot-v2</div>
+<div class="storage-item anim-item">span_count: 6</div>
+<div class="storage-item anim-item">duration_ms: 47300</div>
+<div class="storage-item anim-item">risk_tier: medium</div>
+<div class="storage-item anim-item">token_total: 4218</div>
+<div class="storage-item anim-item">status: complete</div>
+</div>
+<div class="connector">⟶</div>
+<div class="storage-col">
+<h4>S3 Vault (Payloads)</h4>
+<div class="storage-item active anim-item">episodes/abc-123/spans.jsonl</div>
+<div class="storage-item anim-item">episodes/abc-123/prompts.enc</div>
+<div class="storage-item anim-item">episodes/abc-123/completions.enc</div>
+<div class="storage-item anim-item">episodes/abc-123/tool_calls.json</div>
+<div class="storage-item anim-item">episodes/abc-123/metrics.json</div>
+<div class="storage-item anim-item">episodes/abc-123/replay.bin</div>
+</div>
+</div>
+</div>
+<div class="two-col">
+<div class="card">
+<div class="card-header">Query by metadata (fast)</div>
+<pre><span class="c"># Find all failed episodes in the last hour</span>
+SELECT episode_id, agent, duration_ms
+FROM episodes
+WHERE status = <span class="s">'failed'</span>
+  AND created_at > now() - <span class="s">'1 hour'</span>
+ORDER BY duration_ms DESC;</pre>
+</div>
+<div class="card">
+<div class="card-header">Retrieve payload (on demand)</div>
+<pre><span class="c"># Get signed URL for replay data</span>
+GET /episodes/abc-123/replay
+<span class="c">→ 302 redirect to pre-signed S3 URL</span>
+<span class="c">→ TTL: 15 minutes</span>
+<span class="c">→ Encrypted at rest (AES-256)</span></pre>
+</div>
+</div>
+</div>
+
+<!-- Slide 4: API -->
+<div class="slide" id="s4">
+<div class="slide-title">API: Query, Replay, Investigate</div>
+<div class="slide-subtitle">RESTful API for episode retrieval, filtering, and replay</div>
+<div class="two-col">
+<div class="card">
+<div class="card-header">List episodes</div>
+<pre><span class="k">GET</span> /api/v1/episodes
+  ?agent=research-bot-v2
+  &status=failed
+  &since=2025-01-15T00:00:00Z
+  &limit=20
+
+<span class="c">Response:</span>
+{
+  <span class="s">"episodes"</span>: [
+    {
+      <span class="s">"id"</span>: <span class="s">"abc-123"</span>,
+      <span class="s">"agent"</span>: <span class="s">"research-bot-v2"</span>,
+      <span class="s">"task"</span>: <span class="s">"Research competitor pricing"</span>,
+      <span class="s">"spans"</span>: <span class="v">6</span>,
+      <span class="s">"duration_ms"</span>: <span class="v">47300</span>,
+      <span class="s">"risk_tier"</span>: <span class="s">"medium"</span>,
+      <span class="s">"tokens"</span>: <span class="v">4218</span>,
+      <span class="s">"cost_usd"</span>: <span class="v">0.042</span>
+    }
+  ]
+}</pre>
+</div>
+<div class="card">
+<div class="card-header">Replay an episode</div>
+<pre><span class="k">GET</span> /api/v1/episodes/abc-123/replay
+
+<span class="c">Response:</span>
+{
+  <span class="s">"episode_id"</span>: <span class="s">"abc-123"</span>,
+  <span class="s">"steps"</span>: [
+    {
+      <span class="s">"seq"</span>: <span class="v">1</span>,
+      <span class="s">"type"</span>: <span class="s">"llm_call"</span>,
+      <span class="s">"model"</span>: <span class="s">"gpt-4o"</span>,
+      <span class="s">"input"</span>: <span class="s">"Plan research on..."</span>,
+      <span class="s">"output"</span>: <span class="s">"I'll search for..."</span>,
+      <span class="s">"duration_ms"</span>: <span class="v">2100</span>,
+      <span class="s">"tokens"</span>: {
+        <span class="s">"input"</span>: <span class="v">340</span>,
+        <span class="s">"output"</span>: <span class="v">128</span>
+      }
+    },
+    <span class="c">// ... remaining steps</span>
+  ]
+}</pre>
+</div>
+</div>
+</div>
+
+<!-- Slide 5: Use Cases -->
+<div class="slide" id="s5">
+<div class="slide-title">Real-World Use Cases</div>
+<div class="slide-subtitle">Episodes power investigation, regression testing, and compliance</div>
+<div class="metric-row">
+<div class="metric anim-item"><div class="num">↻</div><div class="lbl">Incident Replay</div></div>
+<div class="metric anim-item"><div class="num">📊</div><div class="lbl">Cost Analysis</div></div>
+<div class="metric anim-item"><div class="num">🔍</div><div class="lbl">Regression Test</div></div>
+<div class="metric anim-item"><div class="num">📋</div><div class="lbl">Audit Trail</div></div>
+</div>
+<div class="two-col">
+<div class="card">
+<div class="card-header">Incident investigation</div>
+<pre><span class="c"># Agent sent wrong email — what happened?</span>
+
+$ air episodes list \
+    --agent email-bot \
+    --since "2025-01-15 14:00" \
+    --status complete
+
+<span class="v">Episode e7f-891</span>  14:23:17  <span class="k">5 steps</span>
+  1. llm.chat → "Draft apology email"
+  2. tool.contacts → looked up "John Smith"
+  3. llm.chat → "Compose email body"
+  4. tool.send_email → <span class="k">john.smith@wrong.com</span>
+  5. llm.chat → "Email sent successfully"
+
+<span class="c"># Step 4: wrong contact resolved!</span>
+<span class="c"># Root cause: stale contact cache</span></pre>
+</div>
+<div class="card">
+<div class="card-header">Cost attribution by task</div>
+<pre><span class="c"># Which tasks cost the most this week?</span>
+
+$ air episodes stats \
+    --group-by task_type \
+    --since "7d"
+
+<span class="v">Task Type        Episodes  Avg Cost  Total</span>
+research         142       $0.08     $11.36
+code-review      89        $0.12     $10.68
+email-draft      312       $0.01     $3.12
+data-analysis    28        $0.31     $8.68
+<span class="c">                                     ──────</span>
+<span class="c">                                     $33.84</span>
+
+<span class="c"># data-analysis costs 10x more per task</span>
+<span class="c"># → investigate optimization</span></pre>
+</div>
+</div>
+</div>
+
+<!-- Slide 6: Integration -->
+<div class="slide" id="s6">
+<div class="slide-title">Integration: Drop-In OTel Exporter</div>
+<div class="slide-subtitle">Works with any agent framework that emits OpenTelemetry traces</div>
+<div class="card">
+<div class="card-header">Docker Compose (with air-platform)</div>
+<pre><span class="k">services</span>:
+  <span class="n">episode-store</span>:
+    <span class="k">image</span>: <span class="s">ghcr.io/airblackbox/agent-episode-store:latest</span>
+    <span class="k">ports</span>:
+      - <span class="s">"4318:4318"</span>   <span class="c"># OTLP HTTP receiver</span>
+      - <span class="s">"8080:8080"</span>   <span class="c"># Episode API</span>
+    <span class="k">environment</span>:
+      <span class="v">SQLITE_PATH</span>: <span class="s">/data/episodes.db</span>
+      <span class="v">S3_BUCKET</span>: <span class="s">air-episodes</span>
+      <span class="v">S3_REGION</span>: <span class="s">us-east-1</span>
+      <span class="v">ENCRYPTION_KEY</span>: <span class="s">${EPISODE_ENCRYPTION_KEY}</span>
+    <span class="k">volumes</span>:
+      - <span class="s">episode-data:/data</span></pre>
+</div>
+<div class="card">
+<div class="card-header">Point your OTel Collector at it</div>
+<pre><span class="c"># otelcol-config.yaml</span>
+<span class="k">exporters</span>:
+  <span class="n">otlphttp/episodes</span>:
+    <span class="k">endpoint</span>: <span class="s">http://episode-store:4318</span>
+
+<span class="k">service</span>:
+  <span class="k">pipelines</span>:
+    <span class="n">traces</span>:
+      <span class="k">receivers</span>: [otlp]
+      <span class="k">processors</span>: [genaisafe]
+      <span class="k">exporters</span>: [otlphttp/episodes, otlphttp/jaeger]</pre>
+</div>
+</div>
+
+</div>
+<nav>
+<button id="prev" onclick="go(-1)">← Prev</button>
+<span class="counter"><span id="cur">1</span> / <span id="tot">6</span></span>
+<button id="next" onclick="go(1)">Next →</button>
+</nav>
+</div>
+<script>
+let current=0;const slides=document.querySelectorAll('.slide'),total=slides.length;
+function show(n){slides.forEach(s=>s.classList.remove('active'));slides[n].classList.add('active');
+document.getElementById('cur').textContent=n+1;document.getElementById('tot').textContent=total;
+document.getElementById('prev').disabled=n===0;document.getElementById('next').disabled=n===total-1;
+setTimeout(()=>{const items=slides[n].querySelectorAll('.anim-item');items.forEach((el,i)=>{setTimeout(()=>el.classList.add('show'),i*120)})},100)}
+function go(d){const n=current+d;if(n>=0&&n<total){current=n;show(n)}}
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key===' ')go(1);if(e.key==='ArrowLeft')go(-1)});
+show(0);
+</script>
+</body>
+</html>
