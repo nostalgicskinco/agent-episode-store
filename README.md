@@ -1,5 +1,10 @@
 # agent-episode-store
 
+[![CI](https://github.com/airblackbox/agent-episode-store/actions/workflows/ci.yml/badge.svg)](https://github.com/airblackbox/agent-episode-store/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/airblackbox/agent-episode-store/blob/main/LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg?logo=python&logoColor=white)](https://python.org)
+
+
 Replayable episode ledger for AI agent runs. Part of [AIR Blackbox](https://github.com/airblackbox).
 
 Every agent task becomes an **episode** — a complete, replayable record of every LLM call, tool invocation, and decision the agent made. Episodes are the dataset that makes evals, policy enforcement, and reproducible debugging possible.
