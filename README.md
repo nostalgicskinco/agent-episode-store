@@ -1,6 +1,6 @@
 # agent-episode-store
 
-Replayable episode ledger for AI agent runs. Part of [black-box-labworks](https://github.com/nostalgicskinco).
+Replayable episode ledger for AI agent runs. Part of [AIR Blackbox](https://github.com/airblackbox).
 
 Every agent task becomes an **episode** — a complete, replayable record of every LLM call, tool invocation, and decision the agent made. Episodes are the dataset that makes evals, policy enforcement, and reproducible debugging possible.
 
